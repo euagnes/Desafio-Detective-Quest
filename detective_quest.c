@@ -1,37 +1,96 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+
+#define TAM_HASH 11 // Tamanho primo para melhor distribuição
 
 // =============================================================
 // ESTRUTURAS DE DADOS
 // =============================================================
 
-// Estrutura para a Árvore de Pistas (BST - Binary Search Tree)
+// 1. Tabela Hash (Associação: Pista -> Suspeito)
+typedef struct HashItem {
+    char pista[100];
+    char suspeito[50];
+    struct HashItem *proximo; // Tratamento de colisão (Encadeamento)
+} HashItem;
+
+// 2. BST (Inventário de Pistas Coletadas)
 typedef struct NoPista {
     char texto[100];
     struct NoPista *esquerda;
     struct NoPista *direita;
 } NoPista;
 
-// Estrutura para a Árvore do Mapa (Sala)
+// 3. Árvore Binária (Mapa da Mansão)
 typedef struct Sala {
     char nome[50];
-    char pista[100];         // Pista escondida na sala (pode ser vazia)
-    struct Sala *esquerda;   // Porta da esquerda
-    struct Sala *direita;    // Porta da direita
+    char pista[100];         
+    struct Sala *esquerda;
+    struct Sala *direita;
 } Sala;
 
 // =============================================================
-// FUNÇÕES: GESTÃO DE PISTAS (BST)
+// MÓDULO: TABELA HASH (INTELIGÊNCIA)
+// =============================================================
+
+// Função de Hash simples (Soma ASCII)
+int funcaoHash(char *chave) {
+    int soma = 0;
+    for (int i = 0; chave[i] != '\0'; i++) {
+        soma += chave[i];
+    }
+    return soma % TAM_HASH;
+}
+
+/**
+ * Função: inserirNaHash
+ * Objetivo: Mapeia uma pista a um suspeito na tabela hash.
+ */
+void inserirNaHash(HashItem* tabela[], char* pista, char* suspeito) {
+    int indice = funcaoHash(pista);
+    
+    HashItem* novo = (HashItem*)malloc(sizeof(HashItem));
+    strcpy(novo->pista, pista);
+    strcpy(novo->suspeito, suspeito);
+    novo->proximo = NULL;
+
+    // Inserção no início da lista encadeada (caso haja colisão)
+    if (tabela[indice] == NULL) {
+        tabela[indice] = novo;
+    } else {
+        novo->proximo = tabela[indice];
+        tabela[indice] = novo;
+    }
+}
+
+/**
+ * Função: encontrarSuspeito
+ * Objetivo: Dada uma pista, retorna o nome do suspeito associado.
+ */
+char* encontrarSuspeito(HashItem* tabela[], char* pistaBusca) {
+    int indice = funcaoHash(pistaBusca);
+    HashItem* atual = tabela[indice];
+
+    while (atual != NULL) {
+        if (strcmp(atual->pista, pistaBusca) == 0) {
+            return atual->suspeito;
+        }
+        atual = atual->proximo;
+    }
+    return "Desconhecido";
+}
+
+// =============================================================
+// MÓDULO: BST (INVENTÁRIO)
 // =============================================================
 
 /**
- * Função: inserirPista
- * Objetivo: Insere uma nova pista na árvore BST mantendo a ordem alfabética.
- * Lógica: Se o texto for "menor" (alfabeticamente), vai para esquerda; se "maior", direita.
+ * Função: inserirPista (BST)
+ * Objetivo: Insere pista coletada em ordem alfabética.
  */
 NoPista* inserirPista(NoPista* raiz, char* texto) {
-    // Caso base: se chegamos num ponto vazio, criamos o nó aqui
     if (raiz == NULL) {
         NoPista* novo = (NoPista*)malloc(sizeof(NoPista));
         strcpy(novo->texto, texto);
@@ -39,153 +98,145 @@ NoPista* inserirPista(NoPista* raiz, char* texto) {
         novo->direita = NULL;
         return novo;
     }
-
-    // Se a pista já existe, não duplicamos (opcional)
-    if (strcmp(texto, raiz->texto) == 0) {
-        return raiz; 
-    }
-
-    // Decisão de navegação na BST: Esquerda ou Direita?
-    if (strcmp(texto, raiz->texto) < 0) {
-        // Texto novo vem ANTES do atual no alfabeto -> Esquerda
+    if (strcmp(texto, raiz->texto) < 0)
         raiz->esquerda = inserirPista(raiz->esquerda, texto);
-    } else {
-        // Texto novo vem DEPOIS do atual no alfabeto -> Direita
+    else if (strcmp(texto, raiz->texto) > 0)
         raiz->direita = inserirPista(raiz->direita, texto);
-    }
-
+    
     return raiz;
 }
 
-/**
- * Função: exibirPistas
- * Objetivo: Percorre a BST "Em Ordem" (In-Order) para imprimir alfabeticamente.
- * Ordem: Visita filho esquerdo -> Imprime Raiz -> Visita filho direito.
- */
-void exibirPistas(NoPista* raiz) {
+void exibirPistasOrdem(NoPista* raiz) {
     if (raiz != NULL) {
-        exibirPistas(raiz->esquerda);
+        exibirPistasOrdem(raiz->esquerda);
         printf("- %s\n", raiz->texto);
-        exibirPistas(raiz->direita);
+        exibirPistasOrdem(raiz->direita);
     }
 }
 
 // =============================================================
-// FUNÇÕES: GESTÃO DO MAPA E NAVEGAÇÃO
+// MÓDULO: MAPA E LÓGICA DE JOGO
 // =============================================================
 
 /**
  * Função: criarSala
- * Objetivo: Cria um nó do mapa (Sala) com nome e uma pista opcional.
+ * Objetivo: Cria dinamicamente um cômodo do mapa.
  */
 Sala* criarSala(char* nome, char* pista) {
     Sala* nova = (Sala*)malloc(sizeof(Sala));
     strcpy(nova->nome, nome);
-    strcpy(nova->pista, pista); // Copia a pista (pode ser string vazia "")
+    strcpy(nova->pista, pista);
     nova->esquerda = NULL;
     nova->direita = NULL;
     return nova;
 }
 
 /**
- * Função: explorarSalasComPistas
- * Objetivo: Loop principal do jogo. Navega pelo mapa e coleta pistas.
+ * Função Auxiliar: contarEvidencias
+ * Objetivo: Percorre a BST recursivamente e conta quantas pistas apontam para o acusado.
  */
-void explorarSalasComPistas(Sala* mapaInicial) {
-    Sala* atual = mapaInicial;
-    NoPista* inventarioPistas = NULL; // Começamos sem pistas
-    char escolha = ' ';
+int contarEvidencias(NoPista* raizBST, HashItem* tabelaHash[], char* acusado) {
+    if (raizBST == NULL) return 0;
 
-    printf("\n=== DETECTIVE QUEST: INICIO DA INVESTIGACAO ===\n");
-
-    // Loop continua até o usuário escolher sair ('s')
-    while (escolha != 's' && escolha != 'S') {
-        if (atual == NULL) {
-            printf("\n(!) Erro critico: Voce caiu no limbo (sala nula)!\n");
-            break;
-        }
-
-        printf("\n------------------------------------------------");
-        printf("\nVOCE ESTA EM: [ %s ]", atual->nome);
-        
-        // 1. Verificar e Coletar Pista
-        if (strlen(atual->pista) > 0) {
-            printf("\n(i) Voce encontrou uma pista: \"%s\"", atual->pista);
-            // Insere na BST automaticamente
-            inventarioPistas = inserirPista(inventarioPistas, atual->pista);
-            // Opcional: Limpar a pista da sala para não coletar de novo
-            // strcpy(atual->pista, ""); 
-        } else {
-            printf("\n(i) Nenhuma pista encontrada neste local.");
-        }
-        printf("\n------------------------------------------------");
-
-        // 2. Menu de Navegação
-        printf("\nOpcoes de caminho:");
-        if (atual->esquerda) printf("\n (e) Ir para esquerda: %s", atual->esquerda->nome);
-        else                 printf("\n (e) Esquerda: Sem saida");
-        
-        if (atual->direita)  printf("\n (d) Ir para direita:  %s", atual->direita->nome);
-        else                 printf("\n (d) Direita:  Sem saida");
-        
-        printf("\n (s) Sair e ver relatorio final");
-        
-        printf("\n\nSua escolha: ");
-        scanf(" %c", &escolha);
-
-        // 3. Lógica de Movimento
-        if (escolha == 'e' || escolha == 'E') {
-            if (atual->esquerda) atual = atual->esquerda;
-            else printf("\n(!) Beco sem saida!\n");
-        }
-        else if (escolha == 'd' || escolha == 'D') {
-            if (atual->direita) atual = atual->direita;
-            else printf("\n(!) Beco sem saida!\n");
-        }
-        else if (escolha != 's' && escolha != 'S') {
-            printf("\n(!) Comando invalido.\n");
-        }
+    int contagem = 0;
+    
+    // Verifica a pista do nó atual na Hash Table
+    char* suspeitoReal = encontrarSuspeito(tabelaHash, raizBST->texto);
+    
+    // Comparação simples de strings (ignora case sensitive neste exemplo simples)
+    if (strcmp(suspeitoReal, acusado) == 0) {
+        contagem = 1;
     }
 
-    // Fim da exploração - Relatório
-    printf("\n\n================================================");
-    printf("\n              RELATORIO DO DETETIVE             ");
-    printf("\n================================================\n");
-    if (inventarioPistas == NULL) {
-        printf("Nenhuma pista foi coletada.\n");
-    } else {
-        printf("Pistas coletadas (Ordem Alfabetica):\n");
-        exibirPistas(inventarioPistas);
-    }
-    printf("================================================\n");
+    return contagem + 
+           contarEvidencias(raizBST->esquerda, tabelaHash, acusado) + 
+           contarEvidencias(raizBST->direita, tabelaHash, acusado);
 }
 
 /**
- * Função: main
- * Objetivo: Configura o cenário e inicia o jogo.
+ * Função: verificarSuspeitoFinal
+ * Objetivo: Fase de julgamento.
  */
+void verificarSuspeitoFinal(NoPista* raizBST, HashItem* tabelaHash[]) {
+    char acusado[50];
+    
+    printf("\n\n=== TRIBUNAL DO DETECTIVE ===\n");
+    printf("Baseado nas pistas coletadas:\n");
+    exibirPistasOrdem(raizBST);
+    
+    printf("\nQuem e o culpado? (Digite o nome exato: Mordomo, Jardineiro, Cozinheira): ");
+    scanf("%s", acusado);
+
+    int provas = contarEvidencias(raizBST, tabelaHash, acusado);
+
+    printf("\nAnalisando evidencias contra %s...\n", acusado);
+    printf("Total de provas encontradas: %d\n", provas);
+
+    if (provas >= 2) {
+        printf("\n>>> SUCESSO! Voce reuniu provas suficientes. %s foi preso(a)! <<<\n", acusado);
+    } else {
+        printf("\n>>> FRACASSO! Provas insuficientes. O culpado escapou por falta de evidencias. <<<\n");
+    }
+}
+
+/**
+ * Função: explorarSalas
+ * Objetivo: Loop principal de navegação.
+ */
+void explorarSalas(Sala* mapa, HashItem* tabelaHash[]) {
+    Sala* atual = mapa;
+    NoPista* inventario = NULL;
+    char escolha = ' ';
+
+    while (escolha != 's' && escolha != 'S') {
+        printf("\n--- Local: %s ---\n", atual->nome);
+        
+        // Coleta automática
+        if (strlen(atual->pista) > 0) {
+            printf("[!] Pista encontrada: '%s'\n", atual->pista);
+            inventario = inserirPista(inventario, atual->pista);
+            strcpy(atual->pista, ""); // Remove pista para não duplicar na BST se voltar
+        }
+
+        printf("Caminhos: (e)sq, (d)ir ou (s)air para acusar: ");
+        scanf(" %c", &escolha);
+
+        if (escolha == 'e' && atual->esquerda) atual = atual->esquerda;
+        else if (escolha == 'd' && atual->direita) atual = atual->direita;
+    }
+
+    verificarSuspeitoFinal(inventario, tabelaHash);
+}
+
+// =============================================================
+// FUNÇÃO PRINCIPAL
+// =============================================================
 int main() {
-    // 1. Construção do Mapa (Árvore Binária Fixa)
-    // Nível 0
-    Sala* mapa = criarSala("Hall de Entrada", "");
+    // 1. Inicializar Tabela Hash
+    HashItem* tabelaSuspeitos[TAM_HASH] = {NULL};
 
-    // Nível 1
-    mapa->esquerda = criarSala("Cozinha", "Faca suja de geleia");
-    mapa->direita = criarSala("Biblioteca", "");
+    // Configurando a "Verdade" do jogo (Pista -> Dono)
+    inserirNaHash(tabelaSuspeitos, "Faca suja", "Cozinheira");
+    inserirNaHash(tabelaSuspeitos, "Receita de veneno", "Cozinheira");
+    inserirNaHash(tabelaSuspeitos, "Luva de couro", "Jardineiro");
+    inserirNaHash(tabelaSuspeitos, "Pala com lama", "Jardineiro");
+    inserirNaHash(tabelaSuspeitos, "Relogio de ouro", "Mordomo");
 
-    // Nível 2 - Lado da Cozinha
-    mapa->esquerda->esquerda = criarSala("Despensa", "Pegadas de lama tamanho 42");
-    mapa->esquerda->direita = criarSala("Sala de Jantar", "");
+    // 2. Construir Mapa (Árvore Binária)
+    // O culpado neste cenário será a Cozinheira (se o jogador achar as pistas certas)
+    Sala* mansao = criarSala("Hall", "");
+    
+    mansao->esquerda = criarSala("Cozinha", "Faca suja");
+    mansao->direita = criarSala("Biblioteca", "Relogio de ouro"); // Pista falsa/outro suspeito
+    
+    mansao->esquerda->esquerda = criarSala("Despensa", "Receita de veneno"); // Pista chave!
+    mansao->esquerda->direita = criarSala("Sala de Jantar", "");
+    
+    mansao->direita->direita = criarSala("Jardim", "Luva de couro");
 
-    // Nível 2 - Lado da Biblioteca
-    mapa->direita->esquerda = criarSala("Escritorio", "Bilhete rasgado com a letra A");
-    mapa->direita->direita = criarSala("Jardim de Inverno", "Luva perdida");
-
-    // Nível 3 - Profundidade extra
-    mapa->direita->esquerda->direita = criarSala("Cofre Secreto", "Documento confidencial");
-
-    // 2. Iniciar Jogo
-    explorarSalasComPistas(mapa);
+    // 3. Iniciar Jogo
+    printf("Bem-vindo ao Detective Quest: Nivel Mestre\n");
+    explorarSalas(mansao, tabelaSuspeitos);
 
     return 0;
 }
